@@ -1,0 +1,243 @@
+<?php
+/**
+ * @file
+ * My Social module.
+ */
+
+require_once 'includes/my_social.block.inc';
+require_once 'includes/my_social.form.inc';
+require_once 'includes/my_social.test.inc';
+
+/*=================================
+              HOOKS
+ ================================*/
+
+/**
+ * Implements hook_menu().
+ */
+function my_social_menu() {
+  $items = array();
+
+  $items['my-messages'] = array(
+    'title' => 'My Social Messages',
+    'page callback' => '_my_social_messages',
+    'access callback' => TRUE,
+    'menu_name' => 'main-menu',
+    'type' => MENU_NORMAL_ITEM,
+    'weight' => 1,
+  );
+  $items['my-messages/delete/%'] = array(
+    'page callback' => '_single_message_delete',
+    'page arguments' => array(2),
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+  $items['my-messages/update/ajax'] = array(
+    'delivery callback' => 'ajax_deliver',
+  ) +
+  $items['my-messages/update/nojs'] = array(
+    'page callback' => '_messages_update',
+    'page arguments' => array(2),
+    'access arguments' => array('access content'),
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+  $items['my_social/autocomplete'] = array(
+    'title' => 'Autocomplete for users',
+    'page callback' => '_users_autocomplete',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK
+  );
+  $items['admin/config/messages'] = array(
+    'title' => 'Private messages',
+    'description' => 'Configuration for Private messages system',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('my_social_settings_form'),
+    'access arguments' => array('access administration pages'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_menu_local_tasks_alter().
+ *
+ * Bans unnecessary profile link "Preferences" for teacher role.
+ */
+function my_social_menu_local_tasks_alter(&$data, $router_item, $root_path) {
+  $blocking_key = NULL;
+  if (in_array($root_path, array('user/%/edit', 'user/%/edit/faculty_profile', 'user/%/edit/preferences')) &&
+    in_array('teacher', $router_item['page_arguments'][1]->roles)) {
+    foreach($data['tabs'][1]['output'] as $key => $profile_links) {
+      if (strpos($profile_links['#link']['path'], 'preferences')) {
+        $blocking_key = $key;
+      }
+    }
+    if (!empty($blocking_key)) {
+      unset($data['tabs'][1]['output'][$blocking_key]);
+    }
+  }
+}
+
+/**
+ * Implements hook_rules_event_info().
+ *
+ * New rule event.
+ */
+function my_social_rules_event_info() {
+  return array(
+    'new_private_message' => array(
+      'label' => t('After new private message submit'),
+      'module' => 'my_social',
+      'group' => 'Private Messages',
+    ),
+  );
+}
+
+/**
+ * Implements hook_entity_presave().
+ */
+function my_social_entity_presave($entity, $type) {
+  if ($type == 'message') {
+    if (!empty($_POST['message_from']) && $user = user_load_by_name($_POST['message_from'])) {
+      $from =  $user->uid;
+      $entity->field_message_from['und'][0]['target_id'] = $from;
+    }
+    if (!empty($_POST['message_to']) && $user = user_load_by_name($_POST['message_to'])) {
+      $to =  $user->uid;
+      $entity->field_message_to['und'][0]['target_id'] = $to;
+    }
+    if (!empty($_POST['message_text'])) {
+      $text = $_POST['message_text'];
+      $entity->field_message_text['und'][0]['value'] = $text;
+    }
+  }
+}
+
+/**
+ * Implements hook_views_query_alter().
+ */
+function my_social_views_query_alter(&$view, &$query) {
+  global $user;
+  if ($view->name == 'private_messages') {
+    foreach ($query->where as &$condition_group) {
+      foreach ($condition_group['conditions'] as &$condition) {
+        if ($condition['field'] == 'field_data_field_message_to.field_message_to_target_id') {
+            $condition['value'] = $user->uid;
+        }
+        if ($condition['field'] == 'field_data_field_message_from.field_message_from_target_id') {
+          $condition['value'] = $user->uid;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_theme().
+ */
+function my_social_theme() {
+  return array(
+    'faculty_block' => array(
+      'variables' => array(
+        'teachers'=>NULL,
+        'students'=>NULL,
+      ),
+      'template' => 'templates/faculty_block'
+    ),
+    'messages_buttons' => array(
+      'template' => 'templates/messages_buttons'
+    ),
+  );
+}
+
+/*=================================
+            FUNCTIONS
+ ================================*/
+
+/**
+ * Implements Messages page.
+ *
+ * @return string
+ *   Page content
+ */
+function _my_social_messages() {
+  drupal_add_library('system', 'drupal.ajax');
+  $send_form = drupal_get_form('my_social_form');
+  $buttons = theme('messages_buttons', array('send_form' => $send_form));
+  $messages = social_get_view('private_messages', 'block_private_messages');
+
+  return $buttons . '<div class="row replace-div">' . $messages . '</div>';
+}
+
+/**
+ * Deletes a private message.
+ */
+function _single_message_delete($mid) {
+  if (is_numeric($mid)) {
+    message_delete_multiple(array($mid));
+    drupal_set_message(t('Deleted message #' . $mid));
+  }
+  drupal_goto(base_path() . 'my-messages');
+}
+
+/**
+ * Implements auto-complete query.
+ *
+ * @param string $string
+ *   String from input field.
+ */
+function _users_autocomplete($string = '') {
+  global $user;
+
+  $rid = NULL;
+  if (in_array('teacher', $user->roles)) {
+    $rid = array_search('student', user_roles());
+  } elseif (in_array('student', $user->roles)) {
+    $rid = array_search('teacher', user_roles());
+  }
+
+  $matches = array();
+  if ($string) {
+    $query = db_select('users', 'u');
+    $query->join('users_roles', 'ur', 'u.uid = ur.uid');
+    $query->fields('u', array('name'))
+      ->range(0, 10)
+      ->condition('u.name', db_like($string) . '%', 'LIKE');
+
+    if (!empty($rid)) {
+      $query->condition('ur.rid', $rid, '=');
+    }
+
+    $result = $query->execute();
+
+    foreach ($result as $user) {
+      $matches[$user->name] = check_plain($user->name);
+    }
+  }
+
+  drupal_json_output($matches);
+}
+
+/**
+ * Implements faculty table ajax update.
+ */
+function _messages_update($ajax) {
+
+  $is_ajax = $ajax === 'ajax';
+
+  if ($is_ajax) {
+    $commands = array();
+    $commands[] = ajax_command_replace('.replace-div',
+      '<div class="row replace-div">' . social_get_view('private_messages', 'block_private_messages') . '</div>');
+
+    return array(
+      '#type' => 'ajax',
+      '#commands' => $commands,
+    );
+  }
+  else {
+    drupal_goto(base_path() . 'my-messages');
+  }
+}

@@ -1,0 +1,16 @@
+name = My Social
+description = Social module for users' messaging.
+package = Socials
+version = 7.x-1.0
+core = 7.x
+
+dependencies[] = views
+dependencies[] = rules
+dependencies[] = profile2
+dependencies[] = message
+dependencies[] = jquery_update
+
+files[] = my_social.module
+files[] = my_social.install
+
+configure = admin/config/messages

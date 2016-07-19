@@ -1,0 +1,94 @@
+<?php
+/**
+ * @file
+ * Install and uninstall functions for the My social module.
+ */
+
+/*=================================
+              HOOKS
+ ================================*/
+
+function my_social_install() {
+  $t = get_t();
+
+  drupal_set_message($message = $t('Module <b>My Social</b> was successfully installed.'));
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function my_social_uninstall() {
+  // Feature disable;
+  if (module_exists('my_social_feature')) {
+    module_disable(array('my_social_feature'));
+  }
+
+  drupal_set_message(t('Module <b>My Social</b> has been successfully uninstalled.'));
+}
+
+/**
+ * Implement my_social_enable().
+ */
+function my_social_enable() {
+  $themes = list_themes();
+  if (key_exists('my_social_theme')) {
+    // Enable and set default theme.
+    theme_enable(array('my_social_theme'));
+    variable_set('theme_default', 'my_social_theme');
+  }
+
+  // Enable feature with Roles, Views, Profiles.
+  module_enable(array('my_social_feature'));
+
+  if ($rule_config = rules_config_load('rules_new_private_message')) {
+    // Enable rule.
+    $rule_config->active = TRUE;
+    $rule_config->save();
+  }
+
+  drupal_set_message(t('You may handle test content on setting page ') .
+    '<a href="' . base_path() . 'admin/config/messages">Social settings</a>');
+  drupal_goto(base_path());
+}
+
+/**
+ * Implements hook_disable().
+ */
+function my_social_disable() {
+  drupal_set_message(t('The <b>My Social</b> module has been disabled.'));
+
+  global $base_url;
+
+  if ($rule_config = rules_config_load('rules_new_private_message')) {
+    // Rule disable.
+    $rule_config->active = FALSE;
+    $rule_config->save();
+  }
+
+  drupal_set_message(t('"New Private Message" rule has been disabled.'));
+  drupal_set_message(
+    t('It may has a set of data in database. You can uninstall module here: ') .
+    '<a href="' . $base_url . '/admin/modules/uninstall">' . t('Uninstall list') . '</a>',
+    $type = 'warning');
+}
+
+/*=================================
+            FUNCTIONS
+ ================================*/
+
+/**
+ * Creates roles.
+ *
+ * @param array $role_names
+ *   Role name.
+ */
+function _create_role($role_names = array()) {
+  if (!empty($role_names)) {
+    foreach ($role_names as $role_name) {
+      $role = new stdClass();
+      $role->name = $role_name;
+      user_role_save($role);
+    }
+  }
+}
+
